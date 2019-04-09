@@ -1,2 +1,5 @@
 cifar/l1-norm-pruning/data.cifar10/
 cifar/l1-norm-pruning/logs/
+*.pyc
+cifar/l1-norm-pruning/models/__pycache__/
+cifar/l1-norm-pruning/.ipynb_checkpoints/
