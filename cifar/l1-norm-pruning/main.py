@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.autograd import Variable
+import time 
 
 import models
 
@@ -49,13 +50,17 @@ parser.add_argument('--depth', default=16, type=int,
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
+print('using GPU:', args.cuda)
 
 torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
+# create logs folder 
+args.save = os.path.join(args.save, args.arch+str(args.depth), args.dataset)
 if not os.path.exists(args.save):
     os.makedirs(args.save)
+print('train logs will save to:', args.save)
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 if args.dataset == 'cifar10':
@@ -117,6 +122,7 @@ def train(epoch):
     model.train()
     avg_loss = 0.
     train_acc = 0.
+
     for batch_idx, (data, target) in enumerate(train_loader):
         if args.cuda:
             data, target = data.cuda(), target.cuda()
@@ -134,24 +140,31 @@ def train(epoch):
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.data))
 
+
+
 def test():
     model.eval()
     test_loss = 0
     correct = 0
-    for data, target in test_loader:
-        if args.cuda:
-            data, target = data.cuda(), target.cuda()
-        data, target = Variable(data, volatile=True), Variable(target)
-        output = model(data)
-        test_loss += F.cross_entropy(output, target, size_average=False).item() # sum up batch loss
-        pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
-        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+    test_time = time.time() 
+    with torch.no_grad():
+        for data, target in test_loader:
+            if args.cuda:
+                data, target = data.cuda(), target.cuda()
+            data, target = Variable(data), Variable(target)
+            output = model(data)
+            test_loss += F.cross_entropy(output, target, reduction='sum').data # sum up batch loss
+            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+            correct += pred.eq(target.data.view_as(pred)).cpu().sum().item()
 
     test_loss /= len(test_loader.dataset)
-    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.1f}%)\n'.format(
+    test_time = time.time() - time.time() 
+
+    print('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.1f}%)'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
-    return correct / float(len(test_loader.dataset))
+    # print(correct, len(test_loader.dataset))
+    return correct*1.0 / len(test_loader.dataset)
 
 def save_checkpoint(state, is_best, filepath):
     torch.save(state, os.path.join(filepath, 'checkpoint.pth.tar'))
@@ -163,8 +176,11 @@ for epoch in range(args.start_epoch, args.epochs):
     if epoch in [args.epochs*0.5, args.epochs*0.75]:
         for param_group in optimizer.param_groups:
             param_group['lr'] *= 0.1
+    train_time = time.time()
     train(epoch)
+    train_time = time.time() - train_time 
     prec1 = test()
+    # print(prec1)
     is_best = prec1 > best_prec1
     best_prec1 = max(prec1, best_prec1)
     save_checkpoint({
@@ -174,3 +190,7 @@ for epoch in range(args.start_epoch, args.epochs):
         'optimizer': optimizer.state_dict(),
         'cfg': model.cfg
     }, is_best, filepath=args.save)
+    print('Epoch: %d, train_time: %.2f (min), prec1: %f, best_prec1: %f\n' %(epoch, train_time/60.0, prec1, best_prec1))
+
+with open(os.path.join(args.save, 'train.txt'), 'w') as f:
+    f.write('Epoch: %d, train_time: %.2f (min), prec1: %f, best_prec1: %f\n' %(epoch, train_time/60.0, prec1, best_prec1))

@@ -22,7 +22,7 @@ parser.add_argument('--depth', type=int, default=56,
                     help='depth of the resnet')
 parser.add_argument('--model', default='', type=str, metavar='PATH',
                     help='path to the model (default: none)')
-parser.add_argument('--save', default='', type=str, metavar='PATH',
+parser.add_argument('--save', default='./logs', type=str, metavar='PATH',
                     help='path to save pruned model (default: none)')
 parser.add_argument('-v', default='A', type=str, 
                     help='version of the model')
@@ -30,8 +30,10 @@ parser.add_argument('-v', default='A', type=str,
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+args.save = os.path.join('/'.join(args.model.split('/')[:-1]), 'prune'+args.v) 
 if not os.path.exists(args.save):
     os.makedirs(args.save)
+print('prune log will save to:', args.save)
 
 model = resnet(depth=args.depth, dataset=args.dataset)
 
@@ -47,9 +49,9 @@ if args.model:
         print("=> loaded checkpoint '{}' (epoch {}) Prec1: {:f}"
               .format(args.model, checkpoint['epoch'], best_prec1))
     else:
-        print("=> no checkpoint found at '{}'".format(args.resume))
-
-print('Pre-processing Successful!')
+        raise ValueError("=> no checkpoint found at '{}'".format(args.model))
+else:
+    raise ValueError('args.model cannot be empty!')
 
 # simple test model after Pre-processing prune (simple set BN scales to zeros)
 def test(model):
@@ -70,28 +72,34 @@ def test(model):
         raise ValueError("No valid dataset is given.")
     model.eval()
     correct = 0
-    for data, target in test_loader:
-        if args.cuda:
-            data, target = data.cuda(), target.cuda()
-        data, target = Variable(data, volatile=True), Variable(target)
-        output = model(data)
-        pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
-        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+    with torch.no_grad():
+        for data, target in test_loader:
+            if args.cuda:
+                data, target = data.cuda(), target.cuda()
+            data, target = Variable(data), Variable(target)
+            output = model(data)
+            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+            correct += pred.eq(target.data.view_as(pred)).cpu().sum().item()
 
-    print('\nTest set: Accuracy: {}/{} ({:.1f}%)\n'.format(
+    print('Test set: Accuracy: {}/{} ({:.1f}%)'.format(
         correct, len(test_loader.dataset), 100. * correct / len(test_loader.dataset)))
     return correct / float(len(test_loader.dataset))
 
 acc = test(model)
+print('Before pruning, accuracy: %.3f' %(acc))
 
 skip = {
     'A': [16, 20, 38, 54],
     'B': [16, 18, 20, 34, 38, 54],
+    'C': [16, 18, 20, 34, 38, 54],
+    'D': [], 
 }
 
 prune_prob = {
     'A': [0.1, 0.1, 0.1],
     'B': [0.6, 0.3, 0.1],
+    'C': [0.5, 0.5, 0.5],
+    'D': [0.5, 0.5, 0.5],
 }
 
 layer_id = 1
@@ -188,3 +196,4 @@ print("number of parameters: "+str(num_parameters))
 with open(os.path.join(args.save, "prune.txt"), "w") as fp:
     fp.write("Number of parameters: \n"+str(num_parameters)+"\n")
     fp.write("Test accuracy: \n"+str(acc)+"\n")
+    fp.write(str(newmodel))
