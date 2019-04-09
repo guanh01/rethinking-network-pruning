@@ -22,14 +22,19 @@ parser.add_argument('--depth', type=int, default=16,
                     help='depth of the vgg')
 parser.add_argument('--model', default='', type=str, metavar='PATH',
                     help='path to the model (default: none)')
-parser.add_argument('--save', default='.', type=str, metavar='PATH',
+parser.add_argument('--save', default='./logs', type=str, metavar='PATH',
                     help='path to save pruned model (default: none)')
+parser.add_argument('-v', default='A', type=str, 
+                    help='version of the model')
+
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+args.save = os.path.join('/'.join(args.model.split('/')[:-1]), 'prune'+args.v) 
 if not os.path.exists(args.save):
     os.makedirs(args.save)
+print('prune log will save to:', args.save)
 
 model = vgg(dataset=args.dataset, depth=args.depth)
 if args.cuda:
@@ -44,10 +49,13 @@ if args.model:
         model.load_state_dict(checkpoint['state_dict'])
         print("=> loaded checkpoint '{}' (epoch {}) Prec1: {:f}"
               .format(args.model, checkpoint['epoch'], best_prec1))
+#         print('Load checkpoint Successful!')
     else:
-        print("=> no checkpoint found at '{}'".format(args.resume))
+        raise ValueError("=> no checkpoint found at '{}'".format(args.model))
+else:
+    raise ValueError('args.model cannot be empty!')
+    
 
-print('Pre-processing Successful!')
 
 # simple test model after Pre-processing prune (simple set BN scales to zeros)
 def test(model):
@@ -68,20 +76,26 @@ def test(model):
         raise ValueError("No valid dataset is given.")
     model.eval()
     correct = 0
-    for data, target in test_loader:
-        if args.cuda:
-            data, target = data.cuda(), target.cuda()
-        data, target = Variable(data, volatile=True), Variable(target)
-        output = model(data)
-        pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
-        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+    with torch.no_grad():
+        for data, target in test_loader:
+            if args.cuda:
+                data, target = data.cuda(), target.cuda()
+            data, target = Variable(data), Variable(target)
+            output = model(data)
+            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+            correct += pred.eq(target.data.view_as(pred)).cpu().sum().item()
 
     print('\nTest set: Accuracy: {}/{} ({:.1f}%)\n'.format(
         correct, len(test_loader.dataset), 100. * correct / len(test_loader.dataset)))
     return correct / float(len(test_loader.dataset))
 
 acc = test(model)
-cfg = [32, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 256, 256, 256, 'M', 256, 256, 256]
+print('Before pruning, accuracy: %.3f' %(acc))
+
+# start to prune 
+cfgs ={'A': [32, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 256, 256, 256, 'M', 256, 256, 256],
+       'B': [32, 32, 'M', 64, 64, 'M', 128, 128, 128, 'M', 256, 256, 256, 'M', 256, 256, 256]}
+cfg = cfgs[args.v] 
 
 cfg_mask = []
 layer_id = 0
@@ -105,6 +119,7 @@ for m in model.modules():
     elif isinstance(m, nn.MaxPool2d):
         layer_id += 1
 
+print('cfg_mask:', len(cfg_mask), [len(x) for x in cfg_mask])
 
 newmodel = vgg(dataset=args.dataset, cfg=cfg)
 if args.cuda:
