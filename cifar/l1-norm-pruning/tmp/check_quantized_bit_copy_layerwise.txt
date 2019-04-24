@@ -1,0 +1,61 @@
+name	 tensor_shape	 n_LSB	 prec1	 total_time	
+feature.0.wrapped_module.weight	 (64, 3, 3, 3)	 1	 0.9382	 0.043767849604288735	
+feature.0.wrapped_module.weight	 (64, 3, 3, 3)	 2	 0.9358	 0.04476538896560669	
+feature.0.wrapped_module.weight	 (64, 3, 3, 3)	 3	 0.932	 0.04483282168706258	
+feature.0.wrapped_module.weight	 (64, 3, 3, 3)	 4	 0.9098	 0.043702284495035805	
+feature.3.wrapped_module.weight	 (64, 64, 3, 3)	 1	 0.9375	 0.10916215976079305	
+feature.3.wrapped_module.weight	 (64, 64, 3, 3)	 2	 0.9355	 0.11194942394892375	
+feature.3.wrapped_module.weight	 (64, 64, 3, 3)	 3	 0.9162	 0.1102660576502482	
+feature.3.wrapped_module.weight	 (64, 64, 3, 3)	 4	 0.85	 0.1126522978146871	
+feature.7.wrapped_module.weight	 (128, 64, 3, 3)	 1	 0.9384	 0.16972777048746746	
+feature.7.wrapped_module.weight	 (128, 64, 3, 3)	 2	 0.936	 0.17373196681340536	
+feature.7.wrapped_module.weight	 (128, 64, 3, 3)	 3	 0.9299	 0.16499634583791098	
+feature.7.wrapped_module.weight	 (128, 64, 3, 3)	 4	 0.9034	 0.17362626791000366	
+feature.10.wrapped_module.weight	 (128, 128, 3, 3)	 1	 0.9385	 0.29603687127431233	
+feature.10.wrapped_module.weight	 (128, 128, 3, 3)	 2	 0.9381	 0.2911791165669759	
+feature.10.wrapped_module.weight	 (128, 128, 3, 3)	 3	 0.9337	 0.2883302330970764	
+feature.10.wrapped_module.weight	 (128, 128, 3, 3)	 4	 0.9197	 0.2988758683204651	
+feature.14.wrapped_module.weight	 (256, 128, 3, 3)	 1	 0.9385	 0.5477252880732218	
+feature.14.wrapped_module.weight	 (256, 128, 3, 3)	 2	 0.9374	 0.5428547581036886	
+feature.14.wrapped_module.weight	 (256, 128, 3, 3)	 3	 0.9316	 0.5408320585886638	
+feature.14.wrapped_module.weight	 (256, 128, 3, 3)	 4	 0.857	 0.5396862387657165	
+feature.17.wrapped_module.weight	 (256, 256, 3, 3)	 1	 0.9386	 1.0332378029823304	
+feature.17.wrapped_module.weight	 (256, 256, 3, 3)	 2	 0.9381	 1.0544225096702575	
+feature.17.wrapped_module.weight	 (256, 256, 3, 3)	 3	 0.9369	 1.0516651471455891	
+feature.17.wrapped_module.weight	 (256, 256, 3, 3)	 4	 0.9293	 1.0481722036997476	
+feature.20.wrapped_module.weight	 (256, 256, 3, 3)	 1	 0.938	 1.0475297649701436	
+feature.20.wrapped_module.weight	 (256, 256, 3, 3)	 2	 0.9378	 1.0530813972155253	
+feature.20.wrapped_module.weight	 (256, 256, 3, 3)	 3	 0.9369	 1.0369991064071655	
+feature.20.wrapped_module.weight	 (256, 256, 3, 3)	 4	 0.9282	 1.0411057074864705	
+feature.24.wrapped_module.weight	 (512, 256, 3, 3)	 1	 0.9377	 2.0617508053779603	
+feature.24.wrapped_module.weight	 (512, 256, 3, 3)	 2	 0.9377	 2.037894833087921	
+feature.24.wrapped_module.weight	 (512, 256, 3, 3)	 3	 0.9362	 2.049235765139262	
+feature.24.wrapped_module.weight	 (512, 256, 3, 3)	 4	 0.92	 2.032186770439148	
+feature.27.wrapped_module.weight	 (512, 512, 3, 3)	 1	 0.9376	 4.071709505716959	
+feature.27.wrapped_module.weight	 (512, 512, 3, 3)	 2	 0.9378	 4.0586882869402565	
+feature.27.wrapped_module.weight	 (512, 512, 3, 3)	 3	 0.936	 4.066606318950653	
+feature.27.wrapped_module.weight	 (512, 512, 3, 3)	 4	 0.9315	 4.06448293129603	
+feature.30.wrapped_module.weight	 (512, 512, 3, 3)	 1	 0.9379	 4.0542812267939246	
+feature.30.wrapped_module.weight	 (512, 512, 3, 3)	 2	 0.9376	 4.062140210469564	
+feature.30.wrapped_module.weight	 (512, 512, 3, 3)	 3	 0.9369	 4.046823183695476	
+feature.30.wrapped_module.weight	 (512, 512, 3, 3)	 4	 0.9316	 4.01513200600942	
+feature.34.wrapped_module.weight	 (512, 512, 3, 3)	 1	 0.938	 4.049325974782308	
+feature.34.wrapped_module.weight	 (512, 512, 3, 3)	 2	 0.9383	 4.052422233422598	
+feature.34.wrapped_module.weight	 (512, 512, 3, 3)	 3	 0.9367	 4.016374297936758	
+feature.34.wrapped_module.weight	 (512, 512, 3, 3)	 4	 0.9336	 4.0493419090906775	
+feature.37.wrapped_module.weight	 (512, 512, 3, 3)	 1	 0.9382	 4.041627971331279	
+feature.37.wrapped_module.weight	 (512, 512, 3, 3)	 2	 0.9379	 3.9848108887672424	
+feature.37.wrapped_module.weight	 (512, 512, 3, 3)	 3	 0.9366	 4.043889284133911	
+feature.37.wrapped_module.weight	 (512, 512, 3, 3)	 4	 0.9314	 4.052427573998769	
+feature.40.wrapped_module.weight	 (512, 512, 3, 3)	 1	 0.9376	 4.049045654137929	
+feature.40.wrapped_module.weight	 (512, 512, 3, 3)	 2	 0.9337	 4.053645586967468	
+feature.40.wrapped_module.weight	 (512, 512, 3, 3)	 3	 0.5797	 4.03164738814036	
+feature.40.wrapped_module.weight	 (512, 512, 3, 3)	 4	 0.279	 3.975167187054952	
+classifier.0.wrapped_module.weight	 (512, 512)	 1	 0.9374	 0.49521562655766804	
+classifier.0.wrapped_module.weight	 (512, 512)	 2	 0.9344	 0.4975074291229248	
+classifier.0.wrapped_module.weight	 (512, 512)	 3	 0.8926	 0.49175349473953245	
+classifier.0.wrapped_module.weight	 (512, 512)	 4	 0.3758	 0.4797816236813863	
+classifier.3.wrapped_module.weight	 (10, 512)	 1	 0.9374	 0.057216719786326094	
+classifier.3.wrapped_module.weight	 (10, 512)	 2	 0.9376	 0.05059733788172404	
+classifier.3.wrapped_module.weight	 (10, 512)	 3	 0.9374	 0.053039737542470294	
+classifier.3.wrapped_module.weight	 (10, 512)	 4	 0.9378	 0.0491856853167216	

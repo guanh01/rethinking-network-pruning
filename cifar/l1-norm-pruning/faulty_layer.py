@@ -8,7 +8,7 @@
 
 import argparse
 import numpy as np
-import os
+import os, shutil 
 
 import torch
 import torch.nn as nn
@@ -28,7 +28,8 @@ parser.add_argument('--test-batch-size', type=int, default=256, metavar='N',
                     help='input batch size for testing (default: 256)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
-
+parser.add_argument('--clean-dir', action='store_true', default=False,
+                    help='clean directory')
 parser.add_argument('--arch', default='vgg', type=str, 
                     help='architecture to use')
 parser.add_argument('--depth', type=int, default=16,
@@ -42,9 +43,9 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--fault-type', default='faults_layer', type=str,
                     help='fault type: {faults_layer, faults_layer_masking}')
-parser.add_argument('--start-trial-id', type=int, default=0,
+parser.add_argument('--start-trial-id', type=int, default=3,
                     help='start trial id')
-parser.add_argument('--end-trial-id', type=int, default=2,
+parser.add_argument('--end-trial-id', type=int, default=10,
                     help='end trial id (included)')
 parser.add_argument('--data-type', type=str, default='float32',
                     help='data type used for weights: {float32, int8}')
@@ -54,14 +55,6 @@ torch.manual_seed(args.seed)
 
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 print('using GPU:', args.cuda)
-
-if args.data_type == 'float32':
-    args.save = os.path.join('/'.join(args.model.split('/')[:-1]), args.fault_type) 
-else:
-    args.save = os.path.join('/'.join(args.model.split('/')[:-1]), args.data_type, args.fault_type) 
-if not os.path.exists(args.save):
-    os.makedirs(args.save)
-print('prune log will save to:', args.save)
 
 
 def check_directory(path):
@@ -155,32 +148,55 @@ def quantize_model(model):
                 'state_dict': model.state_dict(), 
                 'prec1': prec1
                }, os.path.join(save_path, 'quantized.pth.tar'))
+    print('Quantized model saved to:', save_path)
     
     
     
 # load the model parameters 
 checkpoint = torch.load(args.model)
-# specify the model 
 model = models.__dict__[args.arch](dataset=args.dataset, depth=args.depth, cfg=checkpoint['cfg'])
 model.load_state_dict(checkpoint['state_dict'])
 acc = checkpoint['best_prec1']     
 print('Before fault injection, accuracy: %.4f\n' %(acc))
 
-# if the model needs to be quantized (support int 8 quantization only)
-if args.data_type == 'int8':
-    print('quantize model using data type:', args.data_type)
-    quantize_model(model)
 
 def select_fault_injection_function():
     fn = {'float32': {'faults_layer': inject_faults_float32_fixed_bit_position_and_number}, 
           'int8': {
               'faults_layer': inject_faults_int8_fixed_bit_position_and_number,
-              'faults_layer_masking': inject_faults_int8_fixed_bit_position_and_number_with_masking}
+              'faults_layer_masking': inject_faults_int8_fixed_bit_position_and_number_with_masking,
+              'faults_layer_p': inject_faults_int8_fixed_bit_position_and_number,
+              'faults_layer_rb': inject_faults_int8_random_bit_position, 
+          }
          }
 
     return fn[args.data_type][args.fault_type]
 
+args.data_type = 'int8'
+args.fault_type = 'faults_layer_rb'
 fault_injection_fn = select_fault_injection_function()
+
+
+
+if args.data_type == 'float32':
+    args.save = os.path.join('/'.join(args.model.split('/')[:-1]), args.fault_type) 
+else:
+    args.save = os.path.join('/'.join(args.model.split('/')[:-1]), args.data_type, args.fault_type) 
+
+    
+if os.path.exists(args.save):
+    if args.clean_dir:
+        shutil.rmtree(args.save)
+        print('path already exist! remove path:', args.save)
+else:
+    os.makedirs(args.save)
+print('log will save to:', args.save)
+
+
+# if the model needs to be quantized (support int 8 quantization only)
+if args.data_type == 'int8':
+    print('quantize model using data type:', args.data_type)
+    quantize_model(model)
 
 
 def perturb_model(param, bit_position, n_bits, trial_id, log_path): 
@@ -202,9 +218,8 @@ def perturb_model(param, bit_position, n_bits, trial_id, log_path):
     assert changed_params == n_bits 
     
     total_params = param.data.nelement()
-    total_bits = total_params * 32 
     info = 'trial: %d, bit_position: %d, n_faults: %d, total_params: %d' %(trial_id, bit_position, n_bits, total_params)
-    info += ', flipped_bits: %d (%e)' %(flipped_bits, flipped_bits*1.0/total_bits)
+    info += ', flipped_bits: %d' %(flipped_bits) #, flipped_bits*1.0/total_bits)
     info += ', changed_params: %d (%e)' %(changed_params, changed_params*1.0/total_params)
 
     
@@ -220,10 +235,10 @@ def write_detailed_info(log_path, info):
         
 if args.data_type == 'float32':
     start_bit_position, end_bit_position = 0, 20
-elif args.fault_type == 'faults_layer':
-    start_bit_position, end_bit_position = 0, 8
-else:
+elif args.fault_type == 'faults_layer_masking':
     start_bit_position, end_bit_position = 1, 8
+else:
+    start_bit_position, end_bit_position = 0, 8
     
 
 for param_id, param in enumerate(model.parameters()):
@@ -233,22 +248,25 @@ for param_id, param in enumerate(model.parameters()):
     
     # prepare to preturb param, keep a clone of param
     param_tensor = param.data.cpu().clone()
-    max_n_bits = param_tensor.nelement()
+    num_values = param_tensor.nelement()
       
     for bit_position in range(start_bit_position, end_bit_position):    
 
-        for n_bits in [10**i for i in range(10)]:
-            if n_bits > max_n_bits:
-                break 
-            folder = 'param-%d/bit-%d/nbits-%d' %(param_id, bit_position, n_bits)
+        for fault_rate in [10**x for x in (-8, -7, -6, -5, -4, -3, -2, -1)]:
+            n_bits = int(num_values * fault_rate)
+            
+            if n_bits == 0:
+                continue 
+                
+            folder = 'param-%d/bit-%d/r-%s' %(param_id, bit_position, fault_rate)
             log_path = os.path.join(args.save, folder)
             
-            for trial_id in range(args.start_trial_id, args.end_trial_id+1):
+            for trial_id in range(args.start_trial_id, args.end_trial_id):
+                test_time = time.time()
                 
                 info = perturb_model(param, bit_position, n_bits, trial_id, log_path) 
-                
-                test_time = time.time()
                 acc_with_fault = test(model)
+                
                 test_time = time.time() - test_time  
                 
                 info += ', test_time: %d' %(test_time)
@@ -259,7 +277,8 @@ for param_id, param in enumerate(model.parameters()):
                 
                 # reset the value of that param after each trial 
                 param.data = param_tensor.clone() 
-            
+#     break 
+         
         
         
 
