@@ -1,0 +1,1 @@
+python faulty_network_rb.py --model-name vgg16 --clean-dir |& tee  ./tmp/vgg16_fault_injection_network_4.24.txt

@@ -131,7 +131,7 @@ def select_fault_injection_function():
     fn = {
           'int8': {
               'faults_network_rb': inject_faults_int8_random_bit_position, 
-              'faults_network_rb_ps1': inject_faults_int8_random_bit_position_ps1, 
+#               'faults_network_rb_ps1': inject_faults_int8_random_bit_position_ps1, 
           }
          }
     return fn[args.data_type][args.fault_type]    
@@ -141,9 +141,19 @@ def write_detailed_info(log_path, info):
     with open(os.path.join(log_path, 'logs.txt'), 'a') as f:
         f.write(info+'\n')
         
-
+def get_weights(model):
+    # get weights stat    
+    weights = [] 
+    weights_names = [] 
+    for name, param in model.named_parameters():
+        # don't do simulation on bias and batch normalization layer
+        if len(param.size()) >= 2:
+            weights.append(param) 
+            weights_names.append(name)
+    return weights, weights_names
+    
         
-def perturb_weights(weights, n_faults, trial_id, log_path, fault_injection_fn): 
+def perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn): 
     # use trial_id to setup random seed 
     start = time.time()
     np.random.seed(trial_id)
@@ -151,21 +161,25 @@ def perturb_weights(weights, n_faults, trial_id, log_path, fault_injection_fn):
     flipped_bits, changed_params, stats = 0, 0, {}
     
     # get the n_bits for each weight 
+    weights, _ = get_weights(model)
     weights_sizes = [param.nelement() for param in weights]
     total_values = sum(weights_sizes)
     p = [size/total_values for size in weights_sizes]
     samples = random.choice(len(weights), size=n_faults, p=p)
     counter = collections.Counter(samples)
     
-    print('samples:', counter) 
+    print('samples:', sorted(counter.items())) 
     
     for weight_id in sorted(counter.keys()):
         param = weights[weight_id]
-        tensor = param.data.cpu().numpy()
+        tensor = param.data
+#         tensor_copy = tensor.clone() 
         
         # flip n_bits number of values from tensor
         n_bits = counter[weight_id]
         stats[weight_id] = fault_injection_fn(tensor, random, n_bits)
+        
+#         print('nonzero', torch.nonzero(tensor_copy.view(-1) - tensor.view(-1)).size()[0], len(stats[weight_id]))
         
         flipped_bits += sum([len(arr) for x, arr in stats[weight_id].items()])
         changed_params += len(stats[weight_id])
@@ -174,8 +188,8 @@ def perturb_weights(weights, n_faults, trial_id, log_path, fault_injection_fn):
     
     total_bits = total_values* 8
     info = 'trial: %d, n_faults: %d, total_params: %d' %(trial_id, n_faults, total_values)
-    info += ', flipped_bits: %d (%s)' %(flipped_bits, flipped_bits*1.0/total_bits)
-    info += ', changed_params: %d (%s)' %(changed_params, changed_params*1.0/total_values)
+    info += ', flipped_bits: %d (%.2e)' %(flipped_bits, flipped_bits*1.0/total_bits)
+    info += ', changed_params: %d (%.2e)' %(changed_params, changed_params*1.0/total_values)
     
     end = time.time() - start
     print('Finish fault injection, time (s):', end) 
@@ -206,24 +220,19 @@ if args.data_type == 'int8':
     model_path = quantize_model(model)
 
     
-# get weights stat    
-weights = [] 
-weights_sizes = [] 
-weights_names = [] 
-for name, param in model.named_parameters():
-    # don't do simulation on bias and batch normalization layer
-    if len(param.size()) >= 2:
-        weights.append(param) 
-        weights_sizes.append(param.nelement())
-        weights_names.append(name)
+weights, weights_names = get_weights(model)
+weights_sizes = [param.nelement() for param in weights]
 total_values = sum(weights_sizes)
 print('# weights params:', len(weights), 'total_values:', total_values)
 for i, item in enumerate(zip(weights_names, weights_sizes)):
     print('\t', i, item[0], item[1], '(%f)' %(item[1]/total_values))
 
-# for each fault_rate
-# 1. use fault rate to get the number of faults
-fault_rates = [10**x for x in range(-9, 0, 1)]
+##########################
+## start simulation ######
+##########################
+# for each fault_rate, use fault rate to get the number of faults
+fault_rates = [10**x for x in range(-9, -2, 1)]
+# fault_rates = [0.001] 
 for fault_rate in fault_rates:
     
     n_faults = int(total_values * 8 * fault_rate)
@@ -239,7 +248,7 @@ for fault_rate in fault_rates:
         start = time.time()
         
         load_checkpoint(model_path)
-        info = perturb_weights(weights, n_faults, trial_id, log_path, fault_injection_fn) 
+        info = perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn) 
         acc1 = test_imagenet(model, args.valdir, num_batches = 50)
 
         duration = time.time() - start  
