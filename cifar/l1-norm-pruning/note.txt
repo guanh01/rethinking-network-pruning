@@ -1,1 +1,2 @@
-python faulty_network_rb.py --model-name vgg16 --clean-dir |& tee  ./tmp/vgg16_fault_injection_network_4.24.txt
+scp -r figures/ hguan2@jupiter.csc.ncsu.edu:~/Documents/mywritting/FaultTolerance/nips2019-paper/
+scp * hguan2@eb2-3267-lin01:~/workspace/fault-tolerance/rethinking-network-pruning/cifar/l1-norm-pruning/
