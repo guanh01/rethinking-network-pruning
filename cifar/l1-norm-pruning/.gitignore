@@ -1,5 +1,6 @@
 __pycache__/fault_injection.cpython-35.pyc
 tmp/
+weights/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -39,8 +39,8 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
 parser.add_argument('--model-name', default='vgg16', type=str, 
                     help='architecture to use')
 
-parser.add_argument('--fault-type', default='faults_network_rb', type=str,
-                    help='fault type: {faults_network_rb, fault_network_rb_ps1}')
+parser.add_argument('--fault-type', default='faults_network_rb_inplace', type=str,
+                    help='fault type: {faults_network_rb_inplace}')
 parser.add_argument('--start-trial-id', type=int, default=0,
                     help='start trial id')
 parser.add_argument('--end-trial-id', type=int, default=5,
@@ -73,8 +73,7 @@ def select_fault_injection_function():
               'faults_network_rb_ps1': inject_faults_int8_random_bit_position_ps1,
               'faults_network_rb_parity_zero': inject_faults_int8_random_bit_position_parity_zero,
               'faults_network_rb_parity_avg': inject_faults_int8_random_bit_position_parity_avg,
-              'faults_network_rb_ecc': inject_faults_int8_random_bit_position_ecc,
-              'faults_network_rb_bch': inject_faults_int8_random_bit_position_bch,
+              'faults_network_rb_inplace': inject_faults_int8_random_bit_position_inpace_secded,
           }
          }
     return fn[args.data_type][args.fault_type]  
@@ -130,8 +129,7 @@ def quantize_model(model, test=False):
     model_path = os.path.join(save_path, 'quantized.pth.tar')
     
     if not os.path.exists(model_path):
-        num_batches = 50
-        prec1 = test_imagenet(model, args.valdir, num_batches = num_batches)
+        prec1 = test_imagenet(model, args.valdir, num_batches = 50)
         # write the accuracy 
         
         with open(os.path.join(save_path, "quantize.txt"), "w") as fp:
@@ -160,32 +158,65 @@ def get_weights(model):
             weights_names.append(name)
     return weights, weights_names
     
-        
-def perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn): 
+
+def load_steps():
+    steps = [] 
+    steps_path = os.path.join('./logs', args.model_name, args.dataset, args.data_type, 'gradual_encoding_absolute')
+    print('load lossy steps from path:', steps_path) 
+    with open(os.path.join(steps_path, 'steps.txt'), 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            line = line.strip()
+            items = line.split(':')
+            accuracy = float(items[0])
+            weights_ids = [int(x) for x in items[-1].split(',')] if items[-1].strip() else [] 
+            steps.append((accuracy, weights_ids))
+    return steps 
+
+def encode_wrapper(named_param):
+    name, param = named_param
+    tensor = param.data 
+    start = time.time()
+    secded_encode(tensor)
+    end = time.time() - start
+    print('encode tensor name: %s, size: %s, time(s): %s' %(name, tensor.nelement(), end))
+
+def perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn, lossy_ids): 
     # use trial_id to setup random seed 
     start = time.time()
     np.random.seed(trial_id)
     random = np.random  
     flipped_bits, changed_params, stats = 0, 0, {}
+      
     
     # get the n_bits for each weight 
-    weights, _ = get_weights(model)
+    weights, weights_names = get_weights(model)
     weights_sizes = [param.nelement() for param in weights]
     total_values = sum(weights_sizes)
     p = [size/total_values for size in weights_sizes]
     samples = random.choice(len(weights), size=n_faults, p=p)
     counter = collections.Counter(samples)
-    
     print('samples:', sorted(counter.items())) 
     
+    # first apply lossy encoding to the weights with lossy_ids
+    print('lossy_weight_ids:', lossy_ids)
+    for weight_id in lossy_ids:
+        encode_wrapper((weights_names[weight_id], weights[weight_id]))
+        
+    
     for weight_id in sorted(counter.keys()):
+        if weight_id in lossy_ids:
+            lossy_encoding = True
+        else:
+            lossy_encoding = False 
+            
         param = weights[weight_id]
         tensor = param.data.view(-1)
 #         tensor_copy = tensor.clone() 
         
         # flip n_bits number of values from tensor
         n_bits = counter[weight_id]
-        res = fault_injection_fn(tensor, random, n_bits)
+        res = fault_injection_fn(tensor, random, n_bits, lossy_encoding=lossy_encoding)
         stats[weight_id] = res 
         
         if isinstance(res, tuple):
@@ -212,6 +243,9 @@ def perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn):
     save_pickle(save_path, save_name, stats)
     
     return info  
+
+
+
 
         
 # load the model parameters 
@@ -240,44 +274,54 @@ print('# weights params:', len(weights), ', total_values:', total_values)
 for i, item in enumerate(zip(weights_names, weights_sizes)):
     print('\t', i, item[0], item[1], '(%f)' %(item[1]/total_values))
 
+lossy_steps = load_steps()
+for item in lossy_steps:
+     print("%.2f" %(item[0]) + ': '+ ', '.join([str(x) for x in item[1]]))
+        
 ##########################
 ## start simulation ######
 ##########################
 # for each fault_rate, use fault rate to get the number of faults
 print('\nSimulation start: ', datetime.now())
 simulation_start = time.time()
+
 fault_rates = [10**x for x in range(-9, -2, 1)]
-# fault_rates = [0.001] 
+# fault_rates = [1e-3] 
+
 for fault_rate in fault_rates:
     
     n_faults = int(total_values * 8 * fault_rate)
     if n_faults <= 0: 
         continue
     
-    folder = 'r%s' %(fault_rate)
-    log_path = os.path.join(args.save, folder)
-    
-    # for each trial, initialize the model  
-    for trial_id in range(args.start_trial_id, args.end_trial_id):
-        print('\nfault_rate:', fault_rate, ', n_faults:', n_faults, ', trial_id:', trial_id)
-        start = time.time()
+    for lossy_step in lossy_steps:
+        target_acc = lossy_step[0]
+        lossy_ids = set(lossy_step[1])
         
-        load_checkpoint(model_path)
-        model.cpu()
-#         tensor_before = list(model.parameters())[0].clone()
-        
-        info = perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn) 
-        acc1 = test_imagenet(model, args.valdir, num_batches = 50)
-        
-#         tensor_after = list(model.parameters())[0].cpu()
-#         print('tensor_after - tensor_before', torch.nonzero(tensor_after - tensor_before).size())
+        folder = 'r%s/%.2f' %(fault_rate, target_acc)
+        log_path = os.path.join(args.save, folder)
 
-        duration = time.time() - start  
+        # for each trial, initialize the model  
+        for trial_id in range(args.start_trial_id, args.end_trial_id):
+            print('\nfault_rate:', fault_rate, ', n_faults:', n_faults, ', target_acc:', target_acc, ', trial_id:', trial_id)
+            start = time.time()
 
-        info += ', test_time: %d' %(duration)
-        info += ', test_accuracy: %f' %(acc1)
-        print(info, '\n')
-        write_detailed_info(log_path, info)
+            load_checkpoint(model_path)
+            model.cpu()
+    #         tensor_before = list(model.parameters())[0].clone()
+
+            info = perturb_weights(model, n_faults, trial_id, log_path, fault_injection_fn, lossy_ids) 
+            acc1 = test_imagenet(model, args.valdir, num_batches = 50)
+
+    #         tensor_after = list(model.parameters())[0].cpu()
+    #         print('tensor_after - tensor_before', torch.nonzero(tensor_after - tensor_before).size())
+
+            duration = time.time() - start  
+
+            info += ', trial_time: %d' %(duration)
+            info += ', test_accuracy: %f' %(acc1)
+            print(info, '\n')
+            write_detailed_info(log_path, info)
         
         
 #         break 

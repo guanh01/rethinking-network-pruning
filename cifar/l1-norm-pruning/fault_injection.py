@@ -608,7 +608,7 @@ def inject_faults_int8_random_bit_position_inpace_secded(tensor, random, n_bits,
     if lossy_encoding:
         return _inject_faults_int8_random_bit_position_inpace_secded_lossy(tensor, random, n_bits, debug_mode=debug_mode)
     else:
-        return _inject_faults_int8_random_bit_position_inpace_secded_lossless(tensor, random, n_bits, debug_mode=debug_mode)
+        return _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, debug_mode=debug_mode)
     
 def _inject_faults_int8_random_bit_position_inpace_secded_lossy(tensor, random, n_bits, debug_mode=False):
     # input tensor is already lossy encoded. No need to do it again. 
@@ -652,29 +652,45 @@ def _inject_faults_int8_random_bit_position_inpace_secded_lossy(tensor, random, 
     injection_time = time.time() - start
     print('sample time (s):', '%.4f' %(sample_time), 
           ', injection_time (s):', '%.4f' %(injection_time),
-         ', corr:%d' %(len(corr))) 
+          ', #faults:%d' %(n_bits),
+         ', #corr:%d' %(len(corr))) 
     if debug_mode:
         print('correct #faults:', len(corr), len(corrected_indexes))
         print('#diff:', np.nonzero(tensor_copy - tensor).size()[0])
     del indexes
     return stats, corr  
     
-def _get_correctable_indexes(indexes):
+def _get_correctable_indexes(indexes, block_size=64, t=1):
+    ''' indexes are bit indexes, a data block is default 64. #errors can be corrected is default to be one.'''
     # if there is only one fault in the data block, can correct the error; otherwise, let it as it is. 
     # TODO: This correction strategy is not right becuase 
     # when #flips >= 3, will wrongly correct it. Currently, ignore this case. 
     corrected_indexes = set()
     blocks = defaultdict(list)
     for index in indexes:
-        blocks[index//64].append(index)
+        blocks[index//block_size].append(index)
     for block_id, block_faults in blocks.items():
-        if len(block_faults) == 1:
-            corrected_indexes.add(block_faults[0])
+        if len(block_faults) <= t:
+            for k in block_faults:
+                corrected_indexes.add(k)
     return corrected_indexes 
 
-def _inject_faults_int8_random_bit_position_inpace_secded_lossless(tensor, random, n_bits, debug_mode=False):
+def _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, 
+                                                            thr=64, block_size=64, t=1, inplace=True,
+                                                            debug_mode=False):
+    '''inputs:
+    tensor: torch tensor
+    random: numpy random
+    n_bits: # bits to be flipped
+    thr: large value threshold
+    block_size: the number of bits to be protected together to form a codeword
+    t: protection ability, can be 1 or 2
+    inplace: if inplace-version of ECC protection is used. If so, need to inject faults to the large value indexes; 
+    otherwise, traditional ECC is used. 
+    '''
     # no need to do the real encoding as it is lossless, but need to record the indexes of large values
-    large_indexes = torch.nonzero((tensor > 63) + (tensor < -64)).view(-1)
+    if inplace:
+        large_indexes = torch.nonzero((tensor > thr-1) + (tensor < -thr)).view(-1)
     
     # 1. fault injection with correction 
     start = time.time()
@@ -683,7 +699,7 @@ def _inject_faults_int8_random_bit_position_inpace_secded_lossless(tensor, rando
     sample_time = time.time() - start
     
     # correct some error: put the indexes into data blocks, check whether a data block has more than two faults. 
-    corrected_indexes = _get_correctable_indexes(indexes) 
+    corrected_indexes = _get_correctable_indexes(indexes, block_size=block_size, t=t) 
 
     start = time.time() 
     stats = defaultdict(list)
@@ -714,46 +730,60 @@ def _inject_faults_int8_random_bit_position_inpace_secded_lossless(tensor, rando
     
     # 2. the indexes of large values could also be faulty. 
     # The number of bits used to store large value's index? currently, use 4Bytes == Int32  
-    start = time.time() 
-    fault_rate  = n_bits / (num_values * 8)
-    n_large = large_indexes.size()[0]
-    n_bits = int(fault_rate * n_large * 32)
-    num_errors = 0 
-    if n_bits > 0:
-        num_errors = _recover_bit_values(tensor, large_indexes, random, n_bits, debug_mode=debug_mode)
-    recover_time = time.time() - start 
-   
-    print('sample time (s):', '%.4f' %(sample_time), 
-          ', injection_time (s):', '%.4f' %(injection_time),
-          ', corr:%d' %(len(corr)),
-         ', recover_time (s):%.4f' %(recover_time), 
-         ', recover_errors:%d' %(num_errors)) 
+    if inplace:
+        start = time.time() 
+        fault_rate  = n_bits / (num_values * 8)
+        n_large = large_indexes.size()[0]
+        n_bits_for_large = int(fault_rate * n_large * 32)
+        num_errors = 0 
+        if n_bits_for_large > 0:
+            num_errors = _recover_bit_values(tensor, large_indexes, random, n_bits_for_large,
+                                             block_size=block_size, t=t, 
+                                             debug_mode=debug_mode)
+        recover_time = time.time() - start 
+
+        print('sample time (s):%.4f' %(sample_time), 
+              ', injection_time (s):%.4f' %(injection_time),
+              ', #faults:%d' %(n_bits),
+              ', #corr:%d' %(len(corr)),
+             ', recover_time (s):%.4f' %(recover_time), 
+             ', recover_errors:%d' %(num_errors)) 
+    else:
+        print('sample time (s):%.4f' %(sample_time), 
+              ', injection_time (s):%.4f' %(injection_time),
+              ', #faults:%d' %(n_bits),
+              ', #corr:%d' %(len(corr))) 
     if debug_mode:
         print('correct #faults:', len(corr), len(corrected_indexes))
         print('#diff:', np.nonzero(tensor_copy - tensor).size()[0]) 
     return stats, corr  
 
-def _recover_bit_values(tensor, large_indexes, random, n_bits, debug_mode=False):
-    # inject faults to large indexes 
+def _recover_bit_values(tensor, large_indexes, random, n_bits, block_size=64, t=1, debug_mode=False):
     if debug_mode:
         print(tensor)
 #         print('large_indexes', large_indexes)
         tensor_copy = tensor.clone()
-        
+    
+    # inject faults to large indexes 
     large_indexes_copy = large_indexes.clone()
-    _inject_faults_to_large_value_indexes_with_correction(large_indexes, random, n_bits, debug_mode=debug_mode)
+    _inject_faults_to_large_value_indexes_with_correction(large_indexes, random, n_bits, 
+                                                          block_size=block_size, t=t,
+                                                          debug_mode=debug_mode)
     changed_ids = torch.nonzero(large_indexes_copy - large_indexes)
     
-#     if debug_mode:
-#         print('changed_ids:', changed_ids)
-    
     # recover tensor value with faulty large_indexes 
+    # TODO: becuase the simulation doesn't use real header, thus, don't know how to recover value. 
+    # The implementation below assumes always change by 64. 
+    # if header format is used, then the simulation can be too complicated becuase tile size can 
+    # also be wrong, thus, the entire recover process will be wrong. 
+    # In the experiment, all the indexes errors can be corrected. Thus, ignore tile size error. 
     num_values = tensor.nelement() 
     previous_large_ids = set([large_indexes_copy[i].item() for i in changed_ids])
     current_large_ids = set([large_indexes[i].item() for i in changed_ids])
     if debug_mode:
         print('previous_large_ids', previous_large_ids)
         print('current_large_ids', current_large_ids)
+    
     num_errors = 0  # number of errors introduced by faulty large value index 
     for large_id in previous_large_ids - current_large_ids:
         if large_id >= num_values:
@@ -782,17 +812,26 @@ def _recover_bit_values(tensor, large_indexes, random, n_bits, debug_mode=False)
         print('after   :', tensor[diff].view(-1)) 
     return num_errors 
     
-def _inject_faults_to_large_value_indexes_with_correction(large_indexes, random, n_bits, debug_mode=False):
+def _inject_faults_to_large_value_indexes_with_correction(large_indexes, random, n_bits, 
+                                                          block_size=64, t=1,
+                                                          debug_mode=False):
+    ''' similar to the inject faults to tensor with correction. The differences are:
+    1. assume index are represented in 32-bit int.
+    2. no need to get injection stats. Thus if the error can be corrected, just skip. 
+    3. print differnt information.
+    '''
     large_indexes = large_indexes.view(-1)
     n_large = large_indexes.size()[0]
     indexes = random.choice(n_large*32, size=n_bits, replace=False)
     if debug_mode:
         print('#large_indexes:', n_large, large_indexes)
-        print('sampled ids:', [x//32 for x in indexes])
+        print('sampled index ids:', [x//32 for x in indexes])
         large_indexes_copy = large_indexes.clone()
     
     # check correction 
-    corrected_indexes = _get_correctable_indexes(indexes)
+    corrected_indexes = _get_correctable_indexes(indexes, block_size=block_size, t=t)
+    if debug_mode:
+        print('corrected index ids:', [x//32 for x in corrected_indexes])
     
     # fault injection to indexes 
     for index in indexes:
@@ -808,11 +847,12 @@ def _inject_faults_to_large_value_indexes_with_correction(large_indexes, random,
                   %(vid, value, bid, bits[bid], value_after_flip, bits.bin)) 
             
         large_indexes[vid] = value_after_flip 
-    print('inject faults to large value indexes, n_larges=%d, #faults=%d' %(n_large, n_bits))
+    print('inject faults to large value indexes, n_larges:%d, #faults:%d, #corr:%d' 
+          %(n_large, n_bits, len(corrected_indexes)))
     if debug_mode:
         print('after fault injection:')
         print('large_indexes:', n_large, large_indexes)
-        print('#diff:', torch.nonzero(large_indexes - large_indexes_copy).view(-1)) 
+        print('large_indexes diff:', torch.nonzero(large_indexes - large_indexes_copy).view(-1)) 
         
 def _inject_faults_to_large_value_indexes(large_indexes, random, n_bits, debug_mode=False):
     large_indexes = large_indexes.view(-1)
@@ -853,7 +893,51 @@ def _test_recover_bit_values():
     n_bits = 5 
     _recover_bit_values(tensor, large_indexes, np.random, n_bits, debug_mode=True)
     
+##############################################################
+# use SEC-DCD/BCH adaptively to detect error and correct error 
+##############################################################
+    
+def inject_faults_int8_random_bit_position_adaptive(tensor, random, n_bits, encoding_format, debug_mode=False):
+    if encoding_format not in ['lossy', 'ECC64', 'ECC32', 'BCH']:
+        raise Exception('encoding format not supported: %s' %(encoding_format))
+        
+    if encoding_format == 'lossy':
+        return _inject_faults_int8_random_bit_position_inpace_secded_lossy(tensor, random, n_bits, debug_mode=debug_mode)
+    if encoding_format == 'ECC64':
+        return  _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, 
+                                                                        thr=64, block_size=64, t=1,
+                                                                        debug_mode=debug_mode)
+    if encoding_format == 'ECC32':
+        return  _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, 
+                                                                        thr=32, block_size=32, t=1,
+                                                                        debug_mode=debug_mode)
+    if encoding_format == 'BCH':
+        return  _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, 
+                                                                    thr=32, block_size=64, t=2,
+                                                                    debug_mode=debug_mode)
+    
+    
 
+    
+##############################################################
+# use traditional ECC to correct error  
+##############################################################
+def inject_faults_int8_random_bit_position_ecc(tensor, random, n_bits, debug_mode=False):
+    # same as _inject_faults_int8_random_bit_position_inpace_lossless but without fault injection to indexes 
+    return _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, 
+                                                                block_size=64, t=1, inplace=False,
+                                                                debug_mode=debug_mode)
+
+##############################################################
+# use traditional BCH to correct error  
+##############################################################
+def inject_faults_int8_random_bit_position_bch(tensor, random, n_bits, debug_mode=False):
+    # same as _inject_faults_int8_random_bit_position_inpace_lossless but without fault injection to indexes 
+    return _inject_faults_int8_random_bit_position_inpace_lossless(tensor, random, n_bits, 
+                                                                block_size=64, t=2, inplace=False,
+                                                                debug_mode=debug_mode)
+
+    
 # def inject_faults_int8_random_bit_position_ps1(tensor, random, n_bits, debug_mode=False):
 #     """ For the tensor, randomly choose n_bits number of bits to flip. Total number of bits is num_values * 8 
 #     input tensor should be torch tensor. 

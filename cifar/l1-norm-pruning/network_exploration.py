@@ -12,7 +12,7 @@ import torchvision
 import models 
 import matplotlib
 from matplotlib import pyplot as plt
-from eval_util import test_imagenet 
+from eval_util import *  
 # import multiprocessing 
 # %matplotlib inline
 import argparse
@@ -39,8 +39,8 @@ parser.add_argument('--model-name', default='vgg16', type=str,
                     help='architecture to use')
 parser.add_argument('--num-batches', default=50, type=int, 
                     help='number of batches for testing')
-# parser.add_argument('--test-quantized', action='store_true', default=False,
-#                     help='test quantized model accuracy')
+parser.add_argument('--test-accuracy', action='store_true', default=False,
+                    help='test model accuracy')
 parser.add_argument('--plot-dist', action='store_true', default=False,
                     help='plot quantized model distribution')
 parser.add_argument('--gradual-encode', action='store_true', default=False,
@@ -49,6 +49,18 @@ parser.add_argument('--gradual-encode-absolute', action='store_true', default=Fa
                     help='encoding with SEC-DED gradually with decreasing absolute number of large values')
 parser.add_argument('--single-encode', action='store_true', default=False,
                     help='encoding with SEC-DED for a single layer')
+parser.add_argument('--gradual-encode-adaptive', action='store_true', default=False,
+                    help='gradually encode with lossy SEC-DEC with decreasing overhead')
+
+parser.add_argument('--save-weights', action='store_true', default=False,
+                    help='save weights including their large value indexes (v > 32)')
+parser.add_argument('--save-parity', action='store_true', default=False,
+                    help='save the parity encode to file')
+
+parser.add_argument('--test-inference-speed', action='store_true', default=False,
+                    help='test the inference speed of a network')
+parser.add_argument('--num-images', default=500, type=int, 
+                    help='number of images for testing inference speed')
 
 matplotlib.rcParams['pdf.fonttype'] = 42
 
@@ -139,6 +151,47 @@ def large_value_percentage(tensor):
 def large_value_number(tensor):
     return torch.nonzero((tensor > 63) +(tensor < -64)).size()[0]
 
+def large_value_indexes(tensor, thr=64):
+    '''tensor is torch tensor, thr is the large value threshold'''
+    tensor = tensor.view(-1)
+    indexes = torch.nonzero((tensor > thr-1) + (tensor < -thr)).view(-1)
+    return indexes 
+
+   
+
+####################
+# parity encoding
+####################
+def _parity_bit_numpy(v, width=8):
+    bits = np.binary_repr(v, width=width) # 8 bits
+    code = (sum(x=='1' for x in bits)%2 ==1)
+    return code 
+
+def _parity_bits(values):
+    return [_parity_bit_numpy(int(v)) for v in values]
+
+
+def factors(n):    
+    return sorted(reduce(list.__add__, 
+                ([i, n//i] for i in range(1, int(n**0.5) + 1) if n % i == 0)))
+def _parity_encode(tensor):
+    size = len(tensor)
+    if size >= 128:
+        fact = factors(size)
+        index = bisect.bisect(fact, 128)
+#         print('size:', size, ', factors:', fact, 'index:', index)
+        split = fact[index]
+#         print('split:', split) 
+        tensor = tensor.view(split, -1)
+        with Pool(32) as p:
+            codes = p.map(_parity_bits, tensor)
+        codes = torch.tensor(codes).view(-1)
+    else:
+        codes = torch.tensor(_parity_bits(tensor))
+    return codes 
+####################
+# end parity encoding
+####################
 
 def write_detailed_info(log_path, info):
     with open(os.path.join(log_path, 'logs.txt'), 'a') as f:
@@ -150,7 +203,7 @@ def load_checkpoint(model_path):
         checkpoint = torch.load(model_path)
         best_prec1 = checkpoint['prec1']
         model.load_state_dict(checkpoint['state_dict'])
-        print("=> loaded checkpoint '{}' Prec1: {:f}"
+        print("=> loaded checkpoint '{}' Prec1: {:.2f}"
           .format(model_path, best_prec1))
     else:
         raise ValueError("=> no checkpoint found at '{}'".format(model_path))
@@ -158,6 +211,7 @@ def load_checkpoint(model_path):
 
 
 def gradual_encoding(model):
+    '''sort layer in decreasing order based on the percentage of large values'''
     log_path = os.path.join(args.save, args.model_name, args.dataset, args.data_type, 'gradual_encoding') 
     clean_directory(log_path) 
     
@@ -180,6 +234,7 @@ def gradual_encoding(model):
 
         
 def gradual_encoding_absolute(model):
+    '''sort layer in decreasing order based on the absolute number of large values'''
     log_path = os.path.join(args.save, args.model_name, args.dataset, args.data_type, 'gradual_encoding_absolute') 
     clean_directory(log_path) 
     
@@ -202,6 +257,7 @@ def gradual_encoding_absolute(model):
         loop_id += 1
 
 def single_encoding(model):
+    ''' apply lossy encoding on a single layer '''
     log_path = os.path.join(args.save, args.model_name, args.dataset, args.data_type, 'single_encoding') 
     clean_directory(log_path) 
     
@@ -225,7 +281,158 @@ def single_encoding(model):
         param.data = tensor_copy 
         
 
+def gradual_encoding_adaptive(model):
+    '''sort layer in decreasing order based on the encoding overhead'''
+    log_path = os.path.join(args.save, args.model_name, args.dataset, args.data_type, 'gradual_encoding_adaptive') 
+    named_weights = get_named_weights(model)
+    
+    # load the sorted weight ids
+    sorted_weight_ids = [] 
+    with open(os.path.join(log_path, 'tier1.txt'), 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            line = line.strip()
+            if line:
+                items = line.split(',')
+                weight_id = int(items[0])
+                sorted_weight_ids.append(weight_id)
+                
+                # check it is correct
+                weight_name = items[1].strip()
+                weight_name2 = named_weights[weight_id][0]
+                assert weight_name == weight_name2, 'weight name not equal: %s, %s' %(weight_name, weight_name2)
+    # first k weights uses lossless encoding, last n-k weights use lossy encoding
+    # use increasing n-k ==> use decreasing k
+    assert len(sorted_weight_ids) == len(named_weights), 'weights number not equal: %d, %d' %(len(sorted_weight_id), len(named_ewights))
+    sorted_weight_ids = sorted_weight_ids[::-1]
+    layers = [(i, named_weights[i]) for i in sorted_weight_ids]
+    
+    # start to evaluate the accuracy of models with different encoding 
+    model.cpu()
+    loop_id = 1
+    for weight_id, named_weight in layers:
+        name, weight = named_weight 
+        encode_wrapper((name, weight))
+        acc1 = test_imagenet(model, args.valdir, num_batches=args.num_batches)
+        model.cpu()
+        
+        info = 'loop: %d/%d, weight_id: %d, name: %s, accuracy: %.2f' %(loop_id, len(named_weights), weight_id, name, acc1)
+        print(info) 
+        write_detailed_info(log_path, info)
+        loop_id += 1
+    
+def save_weights(model):
+    metapath = os.path.join('./weights', args.model_name) 
+    datapath = os.path.join('./weights', args.model_name, 'weights') 
+    indexpath = os.path.join('./weights', args.model_name, 'indexes') 
+    
+    named_params = get_named_weights(model)
+    clean_directory(datapath)
+    clean_directory(indexpath)
+    print('weights will save to dir:', datapath) 
+    
+    weight_id =  0 
+    meta = '' 
+    for name, param in named_params:
 
+        tensor = param.data
+        shape = tuple(tensor.size())
+        size = tensor.nelement()
+        
+        # becuase majority vote work for data less than 32, so only store the indexes of larger than 32
+        indexes = large_value_indexes(param.data, thr=32)
+        largerThan32 = len(indexes) 
+
+        # record data meta info 
+        info = '%d, %s, %s, %d, %d' %(weight_id, name, shape, size, largerThan32)
+        meta += info+'\n' 
+        print(info)
+
+        # save tensor to file 
+        tensor1d = tensor.view(-1).numpy().astype(np.int8)
+        np.savetxt(os.path.join(datapath, '%d.txt' %(weight_id)), tensor1d, fmt='%d')
+        
+        # save indexes to file 
+        indexes = indexes.numpy()
+        np.savetxt(os.path.join(indexpath, '%d.txt' %(weight_id)), indexes, fmt='%d')
+
+        weight_id += 1
+    
+    # save meta to file 
+    with open(os.path.join(metapath, 'meta.txt'), 'w') as f:
+        f.write('weight_id, name, shape, size, largerThan32\n')
+        f.write(meta)
+
+        
+def test_inference_speed(model):
+    valdir = args.valdir
+    batch_size = 1
+    workers = 1
+    # define loss function (criterion) and optimizer
+#     criterion = nn.CrossEntropyLoss().cuda()
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+    val_loader = torch.utils.data.DataLoader(
+            datasets.ImageFolder(valdir, transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize,
+            ])),
+            batch_size=batch_size, shuffle=False,
+            num_workers=workers, pin_memory=True)
+
+    # switch to evaluate mode
+    model.eval()
+    model.cuda()
+
+    with torch.no_grad():
+        num_images = args.num_images 
+        total_time = 0 
+        for i, (input, target) in enumerate(val_loader):
+            
+            # take average over 100 images 
+            if i >= num_images:
+                break 
+            
+            input = input.cuda()
+            target = target.cuda()
+            
+            # measure pure GPU inference time
+            end = time.time()  
+            output = model(input)
+            end = time.time() - end 
+            total_time += end 
+    avg_time = total_time / num_images 
+    print('num_images: %d, total time(s): %f, time/image(s): %f' %(num_images, total_time, avg_time))
+
+    return avg_time 
+    
+def save_parity(model):
+    datapath = os.path.join('./weights', args.model_name, 'parity') 
+    named_params = get_named_weights(model)
+    clean_directory(datapath)
+    print('parity will save to dir:', datapath) 
+    
+    weight_id =  0 
+    for name, param in named_params:
+
+        tensor = param.data
+        shape = tuple(tensor.size())
+        size = tensor.nelement()
+        
+        codes = _parity_encode(tensor.view(-1))
+
+        # save tensor to file 
+        tensor1d = codes.view(-1).numpy().astype(np.int8)
+        np.savetxt(os.path.join(datapath, '%d.txt' %(weight_id)), tensor1d, fmt='%d')
+        
+        info = '%d, %s, %s, %d' %(weight_id, name, shape, size)
+        print(info)
+
+        weight_id += 1
+    
     
     
 
@@ -246,9 +453,15 @@ start = time.time()
 print('Start network exploration at time:', datetime.now())
 
 if not args.quantize:
-    print('test float model accuracy ...')
-    acc1 = test_imagenet(model, args.valdir, num_batches=args.num_batches)
-    print('Before quantization, accuracy: %.2f' %(acc1))
+    if args.test_accuracy:
+        print('test float model accuracy ...')
+        acc1 = test_imagenet(model, args.valdir, num_batches=args.num_batches)
+        print('Before quantization, accuracy: %.2f' %(acc1))
+        
+    if args.test_inference_speed:
+        print('test inference speed by averaging over %d images...' %(args.num_images))
+        test_inference_speed(model)
+        
     
 else:
     # post train quantization 
@@ -294,6 +507,26 @@ else:
         print('start to encode single model layer ...')
         load_checkpoint(model_path)
         single_encoding(model)
+        
+    if args.gradual_encode_adaptive:
+        print('start to gradually encode model weights according to encoding overhead adaptively ...')
+        load_checkpoint(model_path)
+        gradual_encoding_adaptive(model)
+        
+    if args.save_weights:
+        print('save weights and large value indexes to file ...')
+        load_checkpoint(model_path)
+        save_weights(model)
+        
+    if args.save_parity:
+        print('save parity encoding bit to file ...')
+        load_checkpoint(model_path)
+        save_parity(model)
+        
+    if args.test_inference_speed:
+        print('test inference speed by averaging over %d images...' %(args.num_images))
+        load_checkpoint(model_path)
+        test_inference_speed(model)
         
 elapsed = time.time() - start
 print('Finished at:', datetime.now(), ', elapsed time (s):', elapsed) 
