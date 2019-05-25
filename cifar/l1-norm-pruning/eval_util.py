@@ -69,7 +69,7 @@ def validate(val_loader, model, criterion, num_batches=None):
     # switch to evaluate mode
     model.eval()
     model.cuda()
-
+    print('validate model with #batches:', num_batches if num_batches else len(val_loader))
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):

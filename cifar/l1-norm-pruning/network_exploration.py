@@ -483,10 +483,10 @@ else:
         print('Quantized model saved to:', model_path)  
     
 #     # print(model)
-#     if args.test_quantized:
-#         print('test quantized model accuracy ...')
-#         acc1 = test_imagenet(model, args.valdir, num_batches=args.num_batches)
-#         print('After quantization, accuracy: %.2f' %(acc1))
+    if args.test_accuracy:
+        print('test quantized model accuracy ...')
+        acc1 = test_imagenet(model, args.valdir, num_batches=args.num_batches)
+        print('After quantization, accuracy: %.2f' %(acc1))
     
     if args.plot_dist:
         print('plot model distribution...')
