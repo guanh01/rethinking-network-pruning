@@ -1,5 +1,5 @@
 
-date=5.23.12
+date=5.24.12
 
 # model=vgg16 
 # python network_exploration.py --model-name ${model} --test-inference-speed |& tee ./tmp/${date}_quantized_${model}_exploration.txt
@@ -7,10 +7,10 @@ date=5.23.12
 # python network_exploration.py --model-name ${model} --test-inference-speed |& tee ./tmp/${date}_quantized_${model}_exploration.txt
 
 
-#model=resnet18 
+model=resnet18 
 #python network_exploration.py --model-name ${model} --test-inference-speed |& tee ./tmp/${date}_quantized_${model}_exploration.txt
 
-model=squeezenet
+#model=squeezenet
 python network_exploration.py --model-name ${model} --quantize --test-accuracy --num-batches 0 |& tee ./tmp/${date}_quantized_${model}_exploration.txt
 
 #model=vgg16 

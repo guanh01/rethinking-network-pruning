@@ -1,2 +1,50 @@
 scp -r figures/ hguan2@jupiter.csc.ncsu.edu:~/Documents/mywritting/FaultTolerance/nips2019-paper/
 scp * hguan2@eb2-3267-lin01:~/workspace/fault-tolerance/rethinking-network-pruning/cifar/l1-norm-pruning/
+
+
+date: 7/30/2019 
+train lstm:
+python main.py --cuda --emsize 1500 --nhid 1500 --dropout 0.65 --epochs 40 --tied # Test perplexity of 72.30
+Log file for this run: /home/hguan2/workspace/fault-tolerance/distiller/examples/word_language_model/logs/2019.07.31-013227/2019.07.31-013227.log
+
+| End of training | test loss  4.43 | test ppl    83.52
+
+val_data: val_loss:    4.46	|	 ppl:   86.79
+after asymmetric + avg activation stats quantize: val_loss:4.521964	|	 ppl:   92.02
+
+counts [106462831, 23737638, 5633531]
+#weights: 135834000 , #params: 135891278 percentage: 0.999579
+['78.38', '17.48', '4.15']
+
+>>>>>>>>>>>>>>>>>>>
+* fault_rate = 1e-3
+- faulty: lin02, finished. 
+
+- zero: lin01
+    test_time(s): 542, test_loss: 4.523001, perplexity: 92.111652, duration(s):5628.20
+
+- vote: lin03:
+    trial: 9, n_faults: 1086672, total_params: 135834000, flipped_bits: 1086672 (1.00e-03), changed_params: 1082885 (7.97e-03), test_time(s): 440, test_loss: 4.524665, perplexity: 92.264991, Simulation ends: 2019-07-31 18:06:23.996416 , duration(s):4406.40
+
+- ecc: lin02, trial: 9, n_faults: 1086672, total_params: 135834000, flipped_bits: 1086672 (1.00e-03), changed_params: 1082816 (7.97e-03), test_time(s): 383, test_loss: 4.520278, perplexity: 91.861119, Simulation ends: 2019-07-31 18:01:48.316446 , duration(s):3820.89
+<<<<<<<<<<<<<<<<<<<
+
+>>>>>>>>>>>>>>>>>>>
+* fault_rate = 1e-2
+- faulty: lin02
+trial: 9, n_faults: 10866720, total_params: 135834000, flipped_bits: 10866720 (1.00e-02), changed_params: 10492951 (7.72e-02), test_time(s): 1892, test_loss: 4.646500, perplexity: 104.219535, duration(s):18897.22
+- zero: lin01
+- vote: lin03
+- ecc: lin02
+<<<<<<<<<<<<<<<<<<
+
+>>>>>>>>>>>>>>>>>>>
+* fault_rate = 1e-4
+- faulty: lin02
+trial: 9, n_faults: 108667, total_params: 135834000, flipped_bits: 108667 (1.00e-04), changed_params: 108639 (8.00e-04), test_time(s): 227, test_loss: 4.527627, perplexity: 92.538724 , duration(s):2269.58
+- zero: lin01
+trial: 9, n_faults: 108667, total_params: 135834000, flipped_bits: 108667 (1.00e-04), changed_params: 108635 (8.00e-04), test_time(s): 365, test_loss: 4.518637, perplexity: 91.710550, Simulation ends: 2019-08-14 01:07:14.924125 , duration(s):3659.65
+- vote: lin03
+trial: 9, n_faults: 108667, total_params: 135834000, flipped_bits: 108667 (1.00e-04), changed_params: 108635 (8.00e-04), test_time(s): 254, test_loss: 4.522858, perplexity: 92.098401, Simulation ends: 2019-08-14 00:50:50.762389 , duration(s):2535.53
+- ecc: lin02
+<<<<<<<<<<<<<<<<<<

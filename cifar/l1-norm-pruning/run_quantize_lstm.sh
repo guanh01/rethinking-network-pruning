@@ -1,0 +1,1 @@
+python quantize_lstm.py |& tee ./tmp/8.13.20_lstm_ecc_r0.0001.txt
